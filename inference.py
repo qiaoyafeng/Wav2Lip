@@ -8,6 +8,11 @@ import torch, face_detection
 from models import Wav2Lip
 import platform
 
+
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
 parser.add_argument('--checkpoint_path', type=str, 
@@ -50,11 +55,56 @@ parser.add_argument('--rotate', default=False, action='store_true',
 parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
 
+parser.add_argument('--face_landmarks_detector_path', default='weights/face_landmarker_v2_with_blendshapes.task',
+					type=str, help='Path to face landmarks detector')
+parser.add_argument('--with_face_mask', action='store_true',
+					help='Blend output into original frame using a face mask rather than directly blending the face box. This prevents a lower resolution square artifact around lower face')
+
 args = parser.parse_args()
 args.img_size = 96
 
 if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
 	args.static = True
+
+
+base_options = python.BaseOptions(model_asset_path='weights/face_landmarker_v2_with_blendshapes.task')
+options = vision.FaceLandmarkerOptions(base_options=base_options,
+                                       output_face_blendshapes=True,
+                                       output_facial_transformation_matrixes=True,
+                                       num_faces=1)
+face_landmarks_detector = vision.FaceLandmarker.create_from_options(options)
+
+def face_mask_from_image(image, face_landmarks_detector):
+	"""
+	Calculate face mask from image. This is done by
+
+	Args:
+		image: numpy array of an image
+		face_landmarks_detector: mediapipa face landmarks detector
+	Returns:
+		A uint8 numpy array with the same height and width of the input image, containing a binary mask of the face in the image
+	"""
+	# initialize mask
+	mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+
+	# detect face landmarks
+	mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
+	detection = face_landmarks_detector.detect(mp_image)
+
+	if len(detection.face_landmarks) == 0:
+		# no face detected - set mask to all of the image
+		mask[:] = 1
+		return mask
+
+	# extract landmarks coordinates
+	face_coords = np.array([[lm.x * image.shape[1], lm.y * image.shape[0]] for lm in detection.face_landmarks[0]])
+
+	# calculate convex hull from face coordinates
+	convex_hull = cv2.convexHull(face_coords.astype(np.float32))
+
+	# apply convex hull to mask
+	return cv2.fillPoly(mask, pts=[convex_hull.squeeze().astype(np.int32)], color=1)
+
 
 def get_smoothened_boxes(boxes, T):
 	for i in range(len(boxes)):
@@ -245,12 +295,13 @@ def main():
 
 	batch_size = args.wav2lip_batch_size
 	gen = datagen(full_frames.copy(), mel_chunks)
+	print("GGGG",gen)
 
-	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, 
+	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen,
 											total=int(np.ceil(float(len(mel_chunks))/batch_size)))):
 		if i == 0:
 			model = load_model(args.checkpoint_path)
-			print ("Model loaded")
+			print("Model loaded")
 
 			frame_h, frame_w = full_frames[0].shape[:-1]
 			out = cv2.VideoWriter('temp/result.avi', 
@@ -268,7 +319,8 @@ def main():
 			y1, y2, x1, x2 = c
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
 
-			f[y1:y2, x1:x2] = p
+			mask = face_mask_from_image(p, face_landmarks_detector)
+			f[y1:y2, x1:x2] = f[y1:y2, x1:x2] * (1 - mask[..., None]) + p * mask[..., None]
 			out.write(f)
 
 	out.release()
