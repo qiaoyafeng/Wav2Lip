@@ -1,3 +1,4 @@
+import time
 from os import listdir, path
 import numpy as np
 import scipy, cv2, os, sys, argparse, audio
@@ -167,7 +168,7 @@ def datagen(frames, mels):
 		print('Using the specified bounding box instead of face detection...')
 		y1, y2, x1, x2 = args.box
 		face_det_results = [[f[y1: y2, x1:x2], (y1, y2, x1, x2)] for f in frames]
-
+	# print(f"face_det_results: {face_det_results}")
 	for i, m in enumerate(mels):
 		idx = 0 if args.static else i%len(frames)
 		frame_to_save = frames[idx].copy()
@@ -329,4 +330,7 @@ def main():
 	subprocess.call(command, shell=platform.system() != 'Windows')
 
 if __name__ == '__main__':
+	start = time.time()
 	main()
+	end = time.time()
+	print(f"main运行时长:{end - start}秒")

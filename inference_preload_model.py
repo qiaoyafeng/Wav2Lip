@@ -191,6 +191,7 @@ def face_detect(images):
 
 def datagen(frames, mels):
     img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
+    start = time.time()
 
     if args.box[0] == -1:
         if not args.static:
@@ -201,6 +202,10 @@ def datagen(frames, mels):
         print("Using the specified bounding box instead of face detection...")
         y1, y2, x1, x2 = args.box
         face_det_results = [[f[y1:y2, x1:x2], (y1, y2, x1, x2)] for f in frames]
+    end = time.time()
+    print(f"face_det_results运行时长:{end - start}秒")
+
+    # print(f"face_det_results: {face_det_results}")
 
     for i, m in enumerate(mels):
         idx = 0 if args.static else i % len(frames)
